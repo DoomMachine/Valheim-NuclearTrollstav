@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Tests the parts of NuclearTrollstav that need no game - the alert scheduler (chaining, gap, cooldowns), the
+    range test, the volume clamp and the send throttle (src\AlertRules.cs) - compiled from the real source file.
+    Run with "dotnet run" from this folder.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>NuclearTrollstav.Tests</AssemblyName>
+    <RootNamespace>NuclearTrollstav</RootNamespace>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>..\build\tests\</OutputPath>
+    <DebugType>none</DebugType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="TestMain.cs" />
+    <Compile Include="..\src\AlertRules.cs" />
+  </ItemGroup>
+
+</Project>

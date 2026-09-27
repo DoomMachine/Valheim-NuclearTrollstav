@@ -1,0 +1,53 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Build:  dotnet build NuclearTrollstav.csproj -c Release     (build\NuclearTrollstav.dll - installs nothing)
+    Needs the .NET SDK and Valheim with BepInEx: set ValheimDir (-p:ValheimDir=...) or the VALHEIM environment
+    variable if the game is not at the default path. tools\deploy.ps1 installs a build, tools\package.ps1 makes a
+    release zip, tools\preflight.ps1 checks a build against the installed game.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <AssemblyName>NuclearTrollstav</AssemblyName>
+    <RootNamespace>NuclearTrollstav</RootNamespace>
+    <Version>1.0.0</Version>
+    <Authors>DoomMachine</Authors>
+    <!-- The file properties' copyright, as in LICENSE; the README's Credits say who made what. -->
+    <Copyright>Copyright (c) 2026 DoomMachine</Copyright>
+    <!-- No .pdb and no path in the DLL: a symbol file names the folder it was built in. -->
+    <DebugType>none</DebugType>
+    <Optimize>true</Optimize>
+    <Deterministic>true</Deterministic>
+    <!-- No default item globs at all (not only Compile): a stray file in a folder here would otherwise be compiled in.
+         The one item list is below. -->
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <OutputPath>build\</OutputPath>
+    <!-- Unity's assemblies bind other System.* versions than netstandard2.1's; harmless for a plugin. -->
+    <MSBuildWarningsAsMessages>MSB3277</MSBuildWarningsAsMessages>
+
+    <ValheimDir Condition="'$(ValheimDir)' == '' and '$(VALHEIM)' != ''">$(VALHEIM)</ValheimDir>
+    <ValheimDir Condition="'$(ValheimDir)' == ''">E:\SteamLibrary\steamapps\common\Valheim</ValheimDir>
+    <Managed>$(ValheimDir)\valheim_Data\Managed</Managed>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="src\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Private=false: game assemblies must never be copied next to the plugin. -->
+    <Reference Include="BepInEx"><HintPath>$(ValheimDir)\BepInEx\core\BepInEx.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>$(ValheimDir)\BepInEx\core\0Harmony.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="assembly_valheim"><HintPath>$(Managed)\assembly_valheim.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="assembly_utils"><HintPath>$(Managed)\assembly_utils.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine"><HintPath>$(Managed)\UnityEngine.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.CoreModule"><HintPath>$(Managed)\UnityEngine.CoreModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.AudioModule"><HintPath>$(Managed)\UnityEngine.AudioModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UnityWebRequestModule"><HintPath>$(Managed)\UnityEngine.UnityWebRequestModule.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="UnityEngine.UnityWebRequestAudioModule"><HintPath>$(Managed)\UnityEngine.UnityWebRequestAudioModule.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+
+</Project>

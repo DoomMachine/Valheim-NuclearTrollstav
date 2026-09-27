@@ -1,0 +1,7 @@
+* text=auto
+*.sh text eol=lf
+*.cs text
+*.ps1 text
+*.md text
+*.csproj text
+*.mp3 binary
