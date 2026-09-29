@@ -640,7 +640,7 @@ namespace NuclearTrollstav
 
         // The owed turn belongs only to a launch that waited through an arm alert that sounded: it is forgotten when that
         // launch is dropped after the wait limit, an arm alert that went with no launch waiting owes nothing, and an arm
-        // alert that could not start owes nothing either. (After the round-3 tripwire review's proposal.)
+        // alert that could not start owes nothing either.
         private static void OwedTests()
         {
             var s = new AlertScheduler();

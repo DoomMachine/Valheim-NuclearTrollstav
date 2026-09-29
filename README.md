@@ -25,7 +25,8 @@ server. Source, releases and issues: https://github.com/DoomMachine/Valheim-Nucl
   The timers start again when the game restarts.
 - **Never above your volume settings.** The alerts play on the game's own interface-sound channel, which follows
   the game's Volume and Effect volume settings, and the plugin's `Volume` (0 to 1, default 0.5) only turns them down
-  from there. A cinematic silences them as it silences everything.
+  from there. No alert starts while a cinematic plays, and a cinematic that silences the game silences one already
+  playing too.
 - An alert that cannot be heard (you are dead, a cinematic plays, a volume is at 0, or its sound file could not be
   loaded) is skipped without using up its 30 minutes. One already waiting for its turn is dropped the same way when
   you die or leave the world, or if it still cannot play 30 seconds after its turn came (time spent waiting for
@@ -75,7 +76,7 @@ the two sound files take effect at once.
 The log has a line when an alert starts playing ("Launch alert (you): playing now.", or "... (a player 42 m away)
 ..."), and a line when one of your own alerts will not play, saying why (for example "one played less than 30 min
 ago"). Another player's alert that reaches you - in range, with `HearOthers` on and while you are alive - gets the
-same line when it will not play, at most once every 10 seconds for each of the two alerts. Nothing is logged for
+same kind of line when it will not play, at most once every 10 seconds for each of the two alerts. Nothing is logged for
 another player's alert you do not hear at all (out of range, `HearOthers` off, or while you are dead), nor for an
 alert still waiting that is dropped when you die or leave the world, or 30 seconds after its turn came.
 
@@ -88,11 +89,16 @@ alert, whether another player's alert is heard, whether an alert can be heard ri
 message's bytes. `tools/preflight.ps1` checks a build against the installed game: its Harmony targets and every game
 member it uses, what the game does that the alerts rely on, and that the plugin's game-side code feeds those
 decisions their inputs from the right places and acts on them the right way round (its description lists each
-check). Run it after every Valheim update. `tools/deploy.ps1` installs a build after running
-preflight, moving any previous install into `retired/` in this folder. `tools/package.ps1` makes a release's zip from
-a clean checkout; run in Windows PowerShell 5.1 with the same .NET SDK and against the same Valheim and BepInEx files,
-the same commit gives the same bytes. The tools find the game the way the build does: `-ValheimDir`, else the
-`VALHEIM` environment variable.
+check). Run it after every Valheim update. `tools/deploy.ps1` installs a build after running preflight, moving any
+previous install into the repository's `retired/` folder (git-ignored). `tools/package.ps1` makes a release's zip
+from a clean checkout; run in Windows PowerShell 5.1 with the same .NET SDK and against the same Valheim and BepInEx
+files, the same commit gives the same bytes. The tools find the game the way the build does: `-ValheimDir`, else the
+`VALHEIM` environment variable, else the same default path as the build (each tool has its own copy of the one in
+`NuclearTrollstav.csproj`).
+
+`docs/design.md` explains how the plugin works and why - the game code it relies on, the decisions taken and the
+alternatives left aside - and what to do after a Valheim update. `docs/open-items.md` lists what is not yet tried in
+play, not verified, open or only an idea.
 
 ## Credits
 

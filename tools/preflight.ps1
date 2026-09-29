@@ -1160,7 +1160,7 @@ $ovc = Get-PluginMethod "Plugin" "OnVolumeChanged"
 if ($vOk -and $ovc -and @(Find-Calls $ovc "Alerts" "ApplyVolume").Count -eq 1) { Ok "Volume.SettingChanged is handled by OnVolumeChanged, which applies the volume" }
 else { Fail "a volume changed in game is not applied at once (Volume.SettingChanged -> OnVolumeChanged -> ApplyVolume)" }
 # ---------------------------------------------------------------------------------------------------------------
-# From the round-3 tripwire review (each proven on its planted defect): the scheduler's clock and kinds, the direction
+# Each of these was proven on a planted defect when it was added: the scheduler's clock and kinds, the direction
 # of the start gate and the drops, the log throttle's inputs, the volume handler, calls by name, Awake's early return,
 # the send flag's order, the "playing now" line, and the message's parameter array.
 Write-Output "== scheduling, logging and sending, traced further =="
