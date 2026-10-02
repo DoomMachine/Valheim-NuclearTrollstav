@@ -11,7 +11,7 @@ namespace NuclearTrollstav
     ///
     /// The message (AlertWire) says which alert and whose character set it off - no position: each listener looks for
     /// that character among the players its own game has loaded and measures the distance itself. A character it has
-    /// not loaded is far away, and a made-up one matches nobody.
+    /// not loaded is treated as out of range, and a made-up one matches nobody.
     /// </summary>
     internal static class Sharing
     {
@@ -56,6 +56,7 @@ namespace NuclearTrollstav
         {
             try
             {
+                if (Diag.Verbose) Diag.Sending(kind);
                 Player me = Player.m_localPlayer;
                 if (me == null) return;
                 ZDOID id = me.GetZDOID();
@@ -91,10 +92,11 @@ namespace NuclearTrollstav
                 // preflight reads these locals and MayHear's arguments from the IL: keep the shapes (a local each, d
                 // set only to zero and to source - me, the arguments inline and in this order).
                 Player me = Player.m_localPlayer;
-                Player source = FindLoadedPlayer(user, id);   // null: not loaded here, so not near
+                Player source = FindLoadedPlayer(user, id);   // null: not loaded here, treated as out of range
                 bool meDead = me != null && me.IsDead();
                 Vector3 d = Vector3.zero;
                 if (me != null && source != null) d = source.transform.position - me.transform.position;
+                if (Diag.Verbose) Diag.Receive(kind, sender, _inLocalSend, source, me, meDead, d);
                 if (AlertRules.MayHear(Plugin.HearOthers.Value, _inLocalSend, sender, ZNet.GetUID(), source, me, meDead,
                         d.x, d.y, d.z, Plugin.HearingRange.Value))
                 {

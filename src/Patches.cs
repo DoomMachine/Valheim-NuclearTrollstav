@@ -55,6 +55,7 @@ namespace NuclearTrollstav
         {
             try
             {
+                if (Diag.Verbose) Diag.Equip(__instance, item, triggerEquipEffects, __state);
                 // preflight reads each argument of this call from the IL: keep them inline and in this order.
                 if (AlertRules.ArmOnEquip(__state, triggerEquipEffects, __instance, Player.m_localPlayer, item,
                         __instance.RightItem, __instance.LeftItem, Trollstav.Is(item), PickupPatch.Depth, ShowHandItemsPatch.EatRestore))
@@ -130,6 +131,7 @@ namespace NuclearTrollstav
         {
             try
             {
+                if (Diag.Verbose) Diag.Attack(__instance, ___m_character, _last);
                 // preflight reads each argument of this call from the IL, and that _last is set to __instance before the
                 // alert: keep them inline and in this order.
                 if (AlertRules.LaunchOnAttack(__instance, _last, ___m_character, Player.m_localPlayer, Trollstav.Is(__instance.GetWeapon())))

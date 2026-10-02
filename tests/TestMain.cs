@@ -7,7 +7,7 @@ namespace NuclearTrollstav
     /// Tests of the rules that need no game (src/AlertRules.cs, compiled in from the real source file).
     /// Run with "dotnet run" from this folder; exits 1 on any failure.
     /// </summary>
-    public static class TestMain
+    public static partial class TestMain
     {
         private static int _failures;
         private static int _passes;
@@ -44,6 +44,10 @@ namespace NuclearTrollstav
             Group("no starving", StarveTests);
             Group("owed turn", OwedTests);
             Group("long sounds", LongSoundTests);
+            Group("is waiting", IsWaitingTests);
+            Group("log filter", LogFilterTests);
+            Group("log format", LogFormatTests);
+            Group("log file", LogFileTests);
             Console.WriteLine(_failures == 0
                 ? "ALL TESTS PASSED (" + _passes + ")"
                 : _failures + " TEST(S) FAILED, " + _passes + " passed");

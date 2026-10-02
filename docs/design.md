@@ -111,6 +111,58 @@ space. Seen working in Valheim 1.0.16 with the two shipped MP3s. The file names 
 - The sender tells the others at most once every 5 s per kind (a courtesy; the listeners' cooldowns are the real
   limit), and another player's refused alert is logged at most once every 10 s per kind.
 
+## Logging (1.1.0)
+
+The requester asked for a default output for the plugin's errors, on by default but switchable, and a verbose log of
+everything that can be chosen to watch one event, besides the game's own logs.
+- **Its own file, `BepInEx\NuclearTrollstav.log`** (`LogFile`, `src/LogFile.cs`), because the game rewrites
+  `LogOutput.log` and `Player.log` at every start: the file is appended across sessions, and each time a session opens
+  it, it gets a header (the date and time, the plugin's and the game's version, the two settings as they are then);
+  every entry starts with its time. Every line is flushed at once, so it can be read while the game runs and is kept
+  if the game crashes.
+- **Limits:** when a session first opens it, a file of 1 MiB or more is renamed `.old.log`, replacing the one before
+  - only when nothing else has the file open: an exclusive handle, sharing only Delete, is held across the delete of
+  the old archive and the rename, so no other program (another copy of the game starting at the same moment) can open
+  the file in between, and a rename that cannot happen does not cost the old archive. A session writes at most
+  10,000 lines other than warnings and errors, and 2,000 lines of warnings and errors besides: a runaway error cannot
+  fill the disk, and a long verbose session cannot crowd out the errors `ErrorLog` is for. Each allowance, once used
+  up, gets one note and nothing more.
+- **One writer per file**: the file is opened for writing by one game only (others may read it), and a second copy of
+  the game running at the same time takes `NuclearTrollstav.2.log`, up to five - as BepInEx does with `LogOutput.log`.
+  Two copies appending to one file overwrote each other's lines when that was tried while building it: each handle
+  keeps its own position. A file that cannot be written stays off for the session, and says so once in BepInEx's log
+  - at once at the start, too.
+- **Fed by a BepInEx log listener** (`FileLogListener`, `src/FileLog.cs`), not by changing every log call: BepInEx hands
+  every line of every source to every listener, from whatever thread logged it, with no lock and no guard against a
+  listener that logs (`BepInEx.Logging.Logger`, decompiled 2026-10-02), and each listener filters for itself.
+  `LogRules.ShouldWrite` decides: with `ErrorLog`, the plugin's own Warning, Error and Fatal lines; with `VerboseLog`,
+  all of its lines; with either, another source's line at those levels (any level with `VerboseLog`) whose text names
+  the plugin - an exception from its code reaches BepInEx through the Unity log with its stack trace in the text
+  (`UnityLogSource`). The listener never throws (a listener that threw would break every log call in the game). Its
+  one warning - the file cannot be written - is logged while a thread-local guard is set, so it cannot come back into
+  the listener and repeat.
+- **The verbose lines** (`Diag`, `src/Diag.cs`) go straight into the file (`FileLogListener.WriteVerbose`), never
+  through BepInEx: BepInEx's `UnityLogListener` copies every line a plugin logs, Debug included, into `Player.log`
+  (decompiled 2026-10-02). Each call site reads `if (Diag.Verbose) Diag.X(...)`: with `VerboseLog` off nothing runs.
+  They sit outside the traced decision lines (a separate statement, never an argument), recompute a decision from the
+  same inputs with the pure `AlertRules` functions to log it, and read state through read-only views (`Alerts.
+  ClipLoaded`, `SourceReady`, `Sounding`, `IsWaiting`, `CooldownLeft`, `StartedAt`, `ClipKind`, `ListenerAlive`) - never
+  `CanPlay` or `EnsureSource`, which would make the audio source. The line for an alert you set off is written after
+  the decision (the decision makes the audio source the first time, so a line before it would wrongly say "cannot be
+  heard").
+  Each entry point catches its own errors, its error report included, so a fault in a log line can never stop an
+  alert. `Alerts.OnRemote` gets no verbose line (preflight wants it free of log lines, so other players cannot flood
+  the log): a received alert is logged in `Sharing.OnAlert`, before the hearing decision - another player's at most
+  once a second per kind, since any client can send them, with the count of the rest written with the next line for
+  another player's alert of that kind or by `Observe` once the second has passed; your own call coming back (marked by
+  the flag set only around your own send, which the network cannot fake) is always logged and does not use the slot,
+  and a call from the network that only carries your id is labelled as such and counted like another player's. The
+  verbose lines name no player, only distances: logs get shared.
+- `Diag.Observe`, first thing in each frame's `Alerts.Tick`, compares with the frame before - entering or leaving a
+  world, dying, an alert that stopped playing, and a waiting alert that stopped waiting without starting (dropped; an
+  alert started has its start time after the last look and its sound on the source). After a frame it did not see
+  (`VerboseLog` was off), it only takes the state in again.
+
 ## Decisions (the requester's, unless noted)
 
 - The cooldown counts **per listener, from any source**: after you heard a launch - yours or a friend's - you hear no
@@ -119,8 +171,11 @@ space. Seen working in Valheim 1.0.16 with the two shipped MP3s. The file names 
   `HearingRange`): no host or server enforcement, and no ServerSync - a vanilla server passes the alerts on anyway.
 - No test console command (declined for 1.0.0).
 - The two sound files are included. The MIT licence covers the code, not them (a choice made while building it).
-- Cooldowns live only in memory and start again when the game restarts: the plugin writes no file of its own - BepInEx
-  keeps its settings file and its log lines (a choice made while building it, to keep it harmless).
+- Cooldowns live only in memory and start again when the game restarts (a choice made while building it, to keep it
+  harmless). Apart from the settings file BepInEx keeps for it, the only file the plugin writes is its own log (1.1.0,
+  the requester's request; above); with `ErrorLog` and `VerboseLog` both off it writes none of its own.
+- The log settings are two switches, as the requester put it: `ErrorLog` on by default, `VerboseLog` off; verbose
+  includes the errors whatever `ErrorLog` says.
 - 2D sound, not positional (a choice made while building it: an alert, not a sound in the world).
 
 ## Where the rules are checked
@@ -128,12 +183,24 @@ space. Seen working in Valheim 1.0.16 with the two shipped MP3s. The file names 
 - `tests/` (`dotnet run` there): every decision in `src/AlertRules.cs` - the arm and launch decisions, hearing,
   whether an alert can be heard, the scheduler, the cooldowns, the gap, the volume clamp and the message's bytes. The
   arm decision and whether an alert can be heard are tried with every combination of their inputs, and the message's
-  bytes with both kinds and a range of ids; the rest with named cases and simulated streams of alerts.
+  bytes with both kinds and a range of ids; the rest with named cases and simulated streams of alerts. And the log
+  file in `src/LogFile.cs`: which lines go in (every combination of the two settings, own source or not, ten level
+  sets and eight texts), their format (every level combination), the numbers the README states, and the file itself
+  in a temp folder (header, appending across sessions, the 1 MiB rename and a held file or archive left alone, the two
+  allowances and their notes, a closed file staying closed, up to five copies, a folder it cannot write staying off).
 - `tools/preflight.ps1`: every Harmony target and game member the plugin uses; what the game does that the alerts rely
   on (the `EquipItem` callers and the flag each passes, the `ShowHandItems` callers, where the attack trigger runs);
   and that the game-side code feeds the decisions their inputs from the right places and acts on them the right way
-  round. It reads exact instruction shapes, so the lines and methods marked `preflight:` in `src/` can fail it even
-  when rewritten harmlessly; change the check with them.
+  round; that it writes no file through `System.IO` or BepInEx but through `LogFile`, made once in `Awake` on
+  `Paths.BepInExRootPath`, whose paths
+  are that folder and `NuclearTrollstav[.n][.old].log` (and no `DiskLogListener` or `ConfigFile` of its own); that
+  the listener's `ShouldWrite` gets the two settings, the line's source and level and decides the write, and its
+  failure warning cannot re-enter; and that the verbose lines only read, go only to the file, and are reached only
+  from the eight reviewed calls behind `Diag.Verbose`. It reads exact instruction shapes, so the lines and methods
+  marked `preflight:` in `src/` can fail it even when rewritten harmlessly; change the check with them.
+- Not checked by either: the verbose lines' own wording and timing - the received-alert throttle and its count, and
+  `Diag.Observe`'s transitions - which run only in the game. A change to them needs a careful read and a run in a
+  harness outside the game.
 
 ## After a Valheim update
 

@@ -2,7 +2,8 @@
 
   <!--
     Tests the parts of NuclearTrollstav that need no game - the alert scheduler (chaining, gap, cooldowns), the
-    range test, the volume clamp and the send throttle (src\AlertRules.cs) - compiled from the real source file.
+    range test, the volume clamp and the send throttle (src\AlertRules.cs), and the plugin's own log file (which lines
+    go in, their format, appending, rotation and the line limit: src\LogFile.cs) - compiled from the real source files.
     Run with "dotnet run" from this folder.
   -->
 
@@ -23,6 +24,8 @@
   <ItemGroup>
     <Compile Include="TestMain.cs" />
     <Compile Include="..\src\AlertRules.cs" />
+    <Compile Include="LogTests.cs" />
+    <Compile Include="..\src\LogFile.cs" />
   </ItemGroup>
 
 </Project>

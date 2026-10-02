@@ -5,7 +5,8 @@
 .DESCRIPTION
   1. identity: BepInPlugin GUID DoomMachine.NuclearTrollstav, name NuclearTrollstav, the expected version, the
      client only (valheim.exe), the "loaded" log line; each setting's default and allowed range (the README's table,
-     and CooldownMinutes 0..1440), and each setting's key bound to the field of its own name
+     and CooldownMinutes 0..1440; ErrorLog on and VerboseLog off), and each setting's key bound to the field of its
+     own name
   2. Harmony: every [HarmonyPatch] target type and method still exists in the game, every patch parameter is a
      target parameter, a field injection of the target type or a Harmony injection, no patch priority sits on a class
      (Harmony would ignore it there), and every patch class is applied: once the settings are bound (Awake returns
@@ -58,13 +59,37 @@
   6. the plugin's other rules: every volume it sets is AlertRules.ClampVolume of the Volume setting, and a volume
      changed in game is applied through Volume.SettingChanged; its one audio source is routed to the mixer group whose
      name == "GUI", and Alerts.Start plays only a routed source and returns after refusing one; it never plays a sound
-     another way, changes a listener or mixer setting, or reads AudioMan.m_guiMixer; it writes no file, preference or
-     setting and instantiates or destroys no object (its own audio object is made with new GameObject); every patch
-     method that makes a call, the network handler, the send, Update and the volume handler catch every exception
-     without rethrowing it; another player's refused alerts are logged only through a 10 s throttle, given the
+     another way, changes a listener or mixer setting, or reads AudioMan.m_guiMixer; it writes no file but its own
+     log file - LogFile is the only type that uses System.IO's writers, it is made once, in Awake, on
+     Paths.BepInExRootPath, and every path it builds is that folder and one of NameOf's names (NuclearTrollstav[.n]
+     [.old].log) - and no preference or setting, and instantiates or destroys no object (its own audio object is made
+     with new GameObject); the verbose log lines only read - Diag, and the read-only views of Alerts it uses, store no
+     field but Diag's own, call no plugin method but a list of readers (the AlertRules functions, Trollstav.Is, the
+     views, Alerts.Label and Now, the scheduler's IsWaiting and CooldownLeft, the error report and
+     FileLogListener.WriteVerbose) and nothing outside the plugin that acts (a setting's value, the settings file) -
+     never log through BepInEx (no ManualLogSource call: their lines go straight to the plugin's file), and every call
+     into Diag sits behind Diag.Verbose; every patch method that makes a call, the network handler, the send, Update,
+     the volume and setting handlers, the log listener, FileLogListener.WriteVerbose and every Diag entry point catch
+     every exception without rethrowing it; another player's refused alerts are logged only through a 10 s throttle, given the
      alert's kind and now, and OnRemote writes no log line itself; the one "playing now" line is written in
      Alerts.Start after Play, only when the start did not throw, and names who set off that alert's kind
-  7. every assembly the plugin references is in the game folder
+  7. the log file and the verbose lines, traced further: the listener's MightWrite gets ErrorLog's and VerboseLog's
+     values and the line's level, right after the line's source test (nothing in between), and its ShouldWrite those, whether the line's source is the plugin's own, and the
+     text; both decide the write (counted as a warning or error by IsProblem of that level); the file is opened with
+     Header(), which is SessionHeader of the moment, the versions and both settings as they are then; WriteVerbose
+     writes only when VerboseLog decides it, Debug lines counted as other lines; OpenIfOn opens the file only with a
+     setting on, then reports; ReportFailure returns when it reported already or the file is fine, sets its flag before
+     its one warning - the listener's only BepInEx log call - and LogEvent, WriteVerbose and OpenIfOn call it inside
+     the try whose finally clears _writing (set just before it), so the warning cannot re-enter; Diag.Verbose is
+     VerboseLog's value and Diag.Line hands its text to FileLogListener.WriteVerbose; the calls into Diag are exactly
+     the 8 reviewed ones (none taken as a delegate), each Diag method called from outside and Diag's error report
+     catch every exception, Diag loads no other type's array, and Diag.Local comes after OnLocal's decision and before
+     its send; Alerts' 8
+     read-only views have their reviewed shapes, and Diag and the views take no delegate of a plugin method that is
+     not a reader and store into no array but Diag's own; the plugin makes no DiskLogListener or ConfigFile (each
+     writes a file) and no GameObject but its audio object (Alerts.EnsureSource); and every path LogFile hands to
+     System.IO, or to its Rotate, is a Path.Combine of its folder (or Rotate's own parameters)
+  8. every assembly the plugin references is in the game folder
   Many checks read exact instruction shapes - of the lines and methods marked "preflight:" in src\, and of the
   handlers that must have their whole body in a try (no code before it) - so harmless-looking rewrites there can
   fail them: keep those shapes, or change the check with them. Run it after every Valheim update. Exits 1 on any
@@ -77,7 +102,7 @@
 [CmdletBinding(PositionalBinding = $false)]   # every argument named: a stray one is an error
 param(
     [string]$Plugin = "",
-    [string]$ExpectedVersion = "1.0.0",
+    [string]$ExpectedVersion = "1.1.0",
     [string]$ValheimDir = ""
 )
 $ErrorActionPreference = "Stop"
@@ -178,6 +203,7 @@ function Get-ArgumentSources($m, [int]$callAt) {
     if ($c.Operand -is [Mono.Cecil.MethodReference]) { $n = $c.Operand.Parameters.Count; if ($c.Operand.HasThis -and $c.OpCode.Name -ne "newobj") { $n++ } }
     elseif ($c.OpCode.Name -eq "stsfld" -or $c.OpCode.Name -eq "starg" -or $c.OpCode.Name -eq "starg.s" -or $c.OpCode.Name -like "stloc*") { $n = 1 }
     elseif ($c.OpCode.Name -like "stind.*" -or $c.OpCode.Name -eq "stfld") { $n = 2 }
+    elseif ($c.OpCode.Name -like "stelem*") { $n = 3 }
     if ($stack.Count -lt $n) { return $null }
     return ,@($stack.GetRange($stack.Count - $n, $n))
 }
@@ -291,6 +317,8 @@ $wantSettings = [ordered]@{
     "Multiplayer.ShareMyAlerts" = @("1", "")
     "Multiplayer.HearOthers" = @("1", "")
     "Multiplayer.HearingRange" = @("100", "1..1000")
+    "Logging.ErrorLog" = @("1", "")
+    "Logging.VerboseLog" = @("0", "")
 }
 $gotSettings = [ordered]@{}
 if ($awake) {
@@ -320,7 +348,7 @@ foreach ($key in $wantSettings.Keys) {
     if ($gotSettings[$key][0] -ne $wantSettings[$key][0] -or $gotSettings[$key][1] -ne $wantSettings[$key][1]) { $settingDiffs += ("{0} = {1} [{2}], expected {3} [{4}]" -f $key, $gotSettings[$key][0], $gotSettings[$key][1], $wantSettings[$key][0], $wantSettings[$key][1]) }
 }
 foreach ($key in $gotSettings.Keys) { if (-not $wantSettings.Contains($key)) { $settingDiffs += "$key is not in the README's table" } }
-if ($settingDiffs.Count -eq 0) { Ok "the 7 settings have the README's defaults and ranges (Volume 0..1, CooldownMinutes 30, HearingRange 100)" }
+if ($settingDiffs.Count -eq 0) { Ok "the 9 settings have the README's defaults and ranges (Volume 0..1, CooldownMinutes 30, HearingRange 100, ErrorLog on, VerboseLog off)" }
 else { Fail ("settings differ from the README: {0}" -f ($settingDiffs -join "; ")) }
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -330,9 +358,10 @@ foreach ($f in @(Get-ChildItem -LiteralPath $managed -Filter *.dll) + @(Get-Chil
     try { $gameModules[$f.Name] = [Mono.Cecil.ModuleDefinition]::ReadModule($f.FullName, $rp) } catch { }
 }
 $valheim = $gameModules["assembly_valheim.dll"]
-# Names Harmony fills in itself; any other patch parameter must be named (and typed) like a parameter of the target,
-# or be a field injection (three underscores and a field of the target's type), or Harmony refuses the patch when the
-# game starts - after every build check has passed.
+# Names Harmony fills in itself; any other patch parameter must be named like a parameter of the target, or be a field
+# injection (three underscores and a field of the target's type), or Harmony refuses the patch when the game starts -
+# after every build check has passed. Harmony matches them by name only; this check also wants the types to match, so a
+# parameter whose type changed fails here although Harmony would still apply the patch with the wrong type.
 $injected = @("__instance", "__result", "__state", "__runOriginal", "__originalMethod", "__args", "__exception")
 $patchClasses = @()
 $expectedPatches = 5
@@ -455,7 +484,8 @@ if ($fake -and $null -eq $fr) { Ok "a deliberately wrong member ($($fake.Name)) 
 else { Fail "the negative control did not fail to resolve (or no game method was found to build it from)" }
 # The game members it may touch, reviewed one by one: reading the local player, the hands, the item's name, the
 # attack's weapon, the loaded players and their ids, ZNet's and ZRoutedRpc's session calls, the audio mixer, the
-# cinematic test - and nothing that writes the world, a save, a map or another player's game.
+# cinematic test, the game's version string (for the log file's session header) - and nothing that writes the world, a
+# save, a map or another player's game.
 $checks++
 $allowedGame = @(
     "Attack::GetWeapon", "AudioMan::get_instance", "AudioMan::GetSFXVolume", "AudioMan::m_masterMixer",
@@ -463,7 +493,7 @@ $allowedGame = @(
     "ItemData::m_dropPrefab", "ItemData::m_shared", "Player::GetAllPlayers", "Player::m_localPlayer",
     "SharedData::m_name", "ZDOID::get_ID", "ZDOID::get_UserID", "ZDOID::IsNone", "ZNet::get_HaveStopped",
     "ZNet::get_instance", "ZNet::GetUID", "ZPackage::.ctor", "ZPackage::GetArray", "ZRoutedRpc::get_instance",
-    "ZRoutedRpc::InvokeRoutedRPC", "ZRoutedRpc::Register"
+    "ZRoutedRpc::InvokeRoutedRPC", "ZRoutedRpc::Register", "Version::GetVersionString"
 )
 $extra = @($gameMembers.Keys | Where-Object { $allowedGame -notcontains $_ } | Sort-Object)
 $unused = @($allowedGame | Where-Object { -not $gameMembers.ContainsKey($_) })
@@ -904,25 +934,113 @@ $forbiddenAudio += Find-Refs "UnityEngine.Audio.AudioMixerSnapshot" '.'
 $forbiddenAudio += Find-Refs "AudioMan" '^(SetSFXVolume|m_guiMixer)$'
 if ($forbiddenAudio.Count -eq 0) { Ok "no other way of playing, no listener, mixer or game volume change" }
 else { Fail ("forbidden audio calls: {0}" -f (($forbiddenAudio | ForEach-Object { "{0} in {1}" -f $_[2].Name, (Get-Owner $_[0]) }) -join "; ")) }
-# Writes nothing outside the game too: files, preferences, spawned objects, its own settings. (Game members: the
-# reviewed list above.)
+# Writes nothing outside the game too: files, preferences, spawned objects, its own settings - except its own log file,
+# which only LogFile writes (its folder and names: the next check). (Game members: the reviewed list above.)
 $checks++
 $writes = @()
 $writes += @($allRefs | Where-Object { $_[2].DeclaringType -and $_[2].DeclaringType.Name -match '^(PlayerPrefs|PlatformPrefs|ZPlayerPrefs)$' -and $_[2].Name -match '^(Set|Delete|Save)' })
-$writes += @($allRefs | Where-Object { $_[2].DeclaringType -and $_[2].DeclaringType.Namespace -eq "System.IO" -and $_[2].DeclaringType.Name -match '^(File|Directory|FileInfo|DirectoryInfo|FileStream|StreamWriter|BinaryWriter)$' -and -not ($_[2].DeclaringType.Name -eq "File" -and $_[2].Name -eq "Exists") })
+$ioWrites = @($allRefs | Where-Object { $_[2].DeclaringType -and $_[2].DeclaringType.Namespace -eq "System.IO" -and $_[2].DeclaringType.Name -match '^(File|Directory|FileInfo|DirectoryInfo|FileStream|StreamWriter|BinaryWriter)$' -and -not ($_[2].DeclaringType.Name -eq "File" -and $_[2].Name -eq "Exists") })
+$writes += @($ioWrites | Where-Object { $_[0].DeclaringType.Name -ne "LogFile" })
 $writes += Find-Refs "UnityEngine.Object" '^(Instantiate|Destroy|DestroyImmediate)$'
 $writes += @($allRefs | Where-Object { $_[2].DeclaringType -and $_[2].DeclaringType.Name -like "ConfigEntry*" -and $_[2].Name -eq "set_Value" })
 $writes += @($allRefs | Where-Object { $_[2].DeclaringType -and $_[2].DeclaringType.Name -eq "ConfigFile" -and $_[2].Name -match '^(Save|Reload|Remove|Clear)' })
-if ($writes.Count -eq 0) { Ok "writes no file, preference or setting, and instantiates or destroys no object (its own audio object is made with new GameObject; game members: the reviewed list)" }
+if ($writes.Count -eq 0) { Ok "writes no file but through LogFile, no preference or setting, and instantiates or destroys no object (its own audio object is made with new GameObject; game members: the reviewed list)" }
 else { Fail ("writes or spawns: {0}" -f (($writes | ForEach-Object { "{0}.{1} in {2}" -f $_[2].DeclaringType.Name, $_[2].Name, (Get-Owner $_[0]) } | Sort-Object -Unique) -join "; ")) }
+# Its own log file: one LogFile, made in Awake on Paths.BepInExRootPath; every path LogFile builds is Path.Combine of
+# that folder and a literal "NuclearTrollstav.log" or NameOf's result, whose only strings make NuclearTrollstav[.n][.old].log.
+$checks++
+$why = @()
+$lfNew = @()
+foreach ($t in (Get-AllTypes $plug)) { foreach ($m in $t.Methods) { if (-not $m.HasBody) { continue }; $mi = @($m.Body.Instructions)
+    for ($k = 0; $k -lt $mi.Count; $k++) { if ($mi[$k].OpCode.Name -eq "newobj" -and $mi[$k].Operand.DeclaringType.Name -eq "LogFile") { $lfNew += ,@($m, $k) } } } }
+if ($lfNew.Count -ne 1) { $why += "LogFile is made $($lfNew.Count) times" }
+elseif ((Get-Owner $lfNew[0][0]) -ne "NuclearTrollstav.Plugin::Awake") { $why += "LogFile is made in $(Get-Owner $lfNew[0][0])" }
+else {
+    $lfs = Get-ArgumentSources $lfNew[0][0] $lfNew[0][1]; $lfi = @($lfNew[0][0].Body.Instructions)
+    if ($null -eq $lfs -or @($lfs).Count -ne 1 -or -not (Test-Is $lfi[$lfs[0]] "call" "Paths" "get_BepInExRootPath")) { $why += "LogFile's folder is not Paths.BepInExRootPath" }
+}
+$lfType = @(); foreach ($t in (Get-AllTypes $plug)) { if ($t.Name -eq "LogFile") { $lfType += $t } }   # not a pipe: Get-AllTypes returns one list
+$combines = 0
+if ($lfType.Count -ne 1) { $why += "no LogFile type" }
+else { foreach ($m in $lfType[0].Methods) { if (-not $m.HasBody) { continue }; $mi = @($m.Body.Instructions)
+    foreach ($k in @(Find-Calls $m "Path" "Combine")) {
+        $combines++
+        $cs = Get-ArgumentSources $m $k
+        if (-not $cs -or @($cs).Count -ne 2) { $why += "$(Get-Owner $m): a Path.Combine that is not (folder, name)"; continue }
+        if (-not ($mi[$cs[0]].OpCode.Name -eq "ldfld" -and $mi[$cs[0]].Operand.Name -eq "_folder")) { $why += "$(Get-Owner $m): a path not in LogFile's folder" }
+        $nm = $mi[$cs[1]]
+        if (-not (($nm.OpCode.Name -eq "ldstr" -and "$($nm.Operand)" -ceq "NuclearTrollstav.log") -or (Test-Is $nm "call" "LogFile" "NameOf"))) { $why += "$(Get-Owner $m): a file name that is not NuclearTrollstav.log or NameOf's" }
+    } }
+    $nameOf = @($lfType[0].Methods | Where-Object { $_.Name -eq "NameOf" })
+    if ($nameOf.Count -ne 1) { $why += "LogFile.NameOf not found" }
+    else { $strs = @($nameOf[0].Body.Instructions | Where-Object { $_.OpCode.Name -eq "ldstr" } | ForEach-Object { "$($_.Operand)" })
+        $odd = @($strs | Where-Object { @("NuclearTrollstav", "NuclearTrollstav.", ".old.log", ".log") -cnotcontains $_ })
+        if ($odd.Count -gt 0) { $why += "NameOf builds names from other strings: $($odd -join ', ')" } }
+    $ioOwners = @($ioWrites | ForEach-Object { Get-Owner $_[0] } | Sort-Object -Unique)
+    $ioOdd = @($ioOwners | Where-Object { $_ -notin @("NuclearTrollstav.LogFile::Open", "NuclearTrollstav.LogFile::Rotate") })
+    if ($ioOdd.Count -gt 0) { $why += "LogFile writes from $($ioOdd -join ', ') (only Open and Rotate may)" }
+}
+if ($combines -lt 2) { $why += "only $combines Path.Combine in LogFile" }
+if ($why.Count -eq 0) { Ok "its own log file: one LogFile, made in Awake on Paths.BepInExRootPath; $combines paths, each that folder and NuclearTrollstav.log or NameOf's name; it writes only in Open and Rotate" }
+else { Fail ("its own log file: {0}" -f ($why -join "; ")) }
+# The verbose log lines only read: Diag, and the read-only views of Alerts it uses, store no field but Diag's own and
+# call nothing that acts; and every call into Diag (but Diag.Verbose itself) sits behind "if (Diag.Verbose)".
+$checks++
+$why = @()
+# Calls into the plugin itself are an allow-list (a reader that calls an actor, like Alerts.CanPlay making the audio
+# source, would slip past a deny-list); outside the plugin, a deny-list of what acts.
+$readers = @("Trollstav::Is", "Alerts::Label", "Alerts::ClipLoaded", "Alerts::get_SourceReady", "Alerts::get_Sounding", "Alerts::IsWaiting",
+    "Alerts::CooldownLeft", "Alerts::ListenerAlive", "Alerts::get_StartedAt", "Alerts::get_ClipKind", "Alerts::get_Now", "Alerts::get_CooldownSeconds",
+    "AlertScheduler::IsWaiting", "AlertScheduler::CooldownLeft", "AlertScheduler::IsValidKind", "Plugin::LogThrottled", "FileLogListener::WriteVerbose")
+$acting = @("ConfigEntry``1::set_Value", "ConfigEntryBase::set_BoxedValue", "ConfigFile::Save", "ConfigFile::Reload")
+$views = @("ClipLoaded", "get_SourceReady", "get_Sounding", "IsWaiting", "CooldownLeft", "ListenerAlive", "get_StartedAt", "get_ClipKind")
+$observers = @()
+foreach ($t in (Get-AllTypes $plug)) {
+    if ($t.Name -eq "Diag") { $observers += @($t.Methods | Where-Object { $_.HasBody }) }
+    if ($t.Name -eq "Alerts") { $observers += @($t.Methods | Where-Object { $_.HasBody -and $views -contains $_.Name }) }
+}
+foreach ($m in $observers) { foreach ($i in $m.Body.Instructions) { $op = $i.Operand
+    if (($i.OpCode.Name -eq "stsfld" -or $i.OpCode.Name -eq "stfld") -and $op.DeclaringType.Name -ne "Diag") { $why += "$(Get-Owner $m) stores $($op.DeclaringType.Name).$($op.Name)" }
+    if ($i.OpCode.Name -match '^(call|callvirt|newobj)$' -and $op -is [Mono.Cecil.MethodReference]) {
+        $nm = "{0}::{1}" -f $op.DeclaringType.Name, $op.Name
+        $inPlugin = $op.DeclaringType.Namespace -eq "NuclearTrollstav"
+        if ($inPlugin -and $op.DeclaringType.Name -ne "Diag" -and $op.DeclaringType.Name -ne "AlertRules" -and $readers -notcontains $nm) { $why += "$(Get-Owner $m) calls $nm, not a reader" }
+        if (-not $inPlugin -and $acting -contains $nm) { $why += "$(Get-Owner $m) calls $nm" }
+        if ($op.DeclaringType.Name -eq "ManualLogSource" -and $m.DeclaringType.Name -eq "Diag") { $why += "$(Get-Owner $m) logs through BepInEx ($($op.Name))" } } } }
+$diagCount = @($observers | Where-Object { $_.DeclaringType.Name -eq "Diag" }).Count
+$viewCount = @($observers | Where-Object { $_.DeclaringType.Name -eq "Alerts" }).Count
+if ($diagCount -lt 10) { $why += "only $diagCount Diag methods found" }
+if ($viewCount -ne $views.Count) { $why += "only $viewCount of Alerts' $($views.Count) read-only views found" }
+$diagCalls = 0
+foreach ($t in (Get-AllTypes $plug)) { if ($t.Name -eq "Diag") { continue }
+    foreach ($m in $t.Methods) { if (-not $m.HasBody) { continue }; $mi = @($m.Body.Instructions)
+        for ($k = 0; $k -lt $mi.Count; $k++) {
+            $op = $mi[$k].Operand
+            if (-not ($mi[$k].OpCode.Name -match '^(call|callvirt)$' -and $op -is [Mono.Cecil.MethodReference] -and $op.DeclaringType.Name -eq "Diag" -and $op.Name -ne "get_Verbose")) { continue }
+            $diagCalls++
+            $guarded = $false
+            for ($j = $k - 1; $j -ge 0; $j--) {
+                if (Test-Is $mi[$j] "call" "Diag" "get_Verbose") {
+                    $br = $mi[$j + 1]
+                    $guarded = $br.OpCode.Name -match '^brfalse' -and [array]::IndexOf($mi, $br.Operand) -gt $k
+                    break
+                }
+            }
+            if (-not $guarded) { $why += "$(Get-Owner $m) calls Diag.$($op.Name) without if (Diag.Verbose) around it" }
+        } } }
+if ($diagCalls -lt 8) { $why += "only $diagCalls calls into Diag found" }
+if ($why.Count -eq 0) { Ok "the verbose log lines only read ($diagCount Diag methods, $viewCount read-only views, plugin calls only to readers), never log through BepInEx, and all $diagCalls calls into Diag sit behind Diag.Verbose" }
+else { Fail ("the verbose log lines: {0}" -f ($why -join "; ")) }
 # Nothing may throw into the game: every patch method that calls anything, the network handler, the send and Update.
 $checks++
 $why = @()
-foreach ($pair in @(@("EquipItemPatch", "Prefix"), @("EquipItemPatch", "Postfix"), @("ProjectileAttackTriggeredPatch", "Postfix"), @("GameStartPatch", "Postfix"), @("Sharing", "OnAlert"), @("Sharing", "Send"), @("Plugin", "Update"), @("Plugin", "OnVolumeChanged"))) {
+foreach ($pair in @(@("EquipItemPatch", "Prefix"), @("EquipItemPatch", "Postfix"), @("ProjectileAttackTriggeredPatch", "Postfix"), @("GameStartPatch", "Postfix"), @("Sharing", "OnAlert"), @("Sharing", "Send"), @("Plugin", "Update"), @("Plugin", "OnVolumeChanged"),
+        @("Plugin", "OnSettingChanged"), @("FileLogListener", "LogEvent"), @("Diag", "Settings"), @("Diag", "SettingChanged"), @("Diag", "Equip"), @("Diag", "Attack"),
+        @("Diag", "Local"), @("Diag", "Sending"), @("Diag", "Receive"), @("Diag", "Observe"), @("FileLogListener", "WriteVerbose"))) {
     $r = Test-CatchAll (Get-PluginMethod $pair[0] $pair[1])
     if ($r) { $why += "$($pair[0]).$($pair[1]): $r" }
 }
-if ($why.Count -eq 0) { Ok "the patch methods above, the network handler, the send, Update and the volume handler each catch every exception without rethrowing it" }
+if ($why.Count -eq 0) { Ok "the patch methods above, the network handler, the send, Update, the volume and setting handlers, the log listener, its WriteVerbose and the 8 Diag entry points each catch every exception without rethrowing it" }
 else { Fail ("may throw into the game: {0}" -f ($why -join "; ")) }
 $checks++
 $ug = @()
@@ -1039,7 +1157,7 @@ if ($why.Count -eq 0) { Ok "sharing: the one Encode(AlertKind, long, uint); Regi
 else { Fail ("sharing's inputs: {0}" -f ($why -join "; ")) }
 # Settings: each key feeds the field of its own name.
 $checks++
-$fieldOf = @{ "Sound.Volume" = "Volume"; "Sound.ArmSound" = "ArmSoundFile"; "Sound.LaunchSound" = "LaunchSoundFile"; "Alerts.CooldownMinutes" = "CooldownMinutes"; "Multiplayer.ShareMyAlerts" = "ShareMyAlerts"; "Multiplayer.HearOthers" = "HearOthers"; "Multiplayer.HearingRange" = "HearingRange" }
+$fieldOf = @{ "Sound.Volume" = "Volume"; "Sound.ArmSound" = "ArmSoundFile"; "Sound.LaunchSound" = "LaunchSoundFile"; "Alerts.CooldownMinutes" = "CooldownMinutes"; "Multiplayer.ShareMyAlerts" = "ShareMyAlerts"; "Multiplayer.HearOthers" = "HearOthers"; "Multiplayer.HearingRange" = "HearingRange"; "Logging.ErrorLog" = "ErrorLog"; "Logging.VerboseLog" = "VerboseLog" }
 $bad9 = @(); $ainsN = @($awake.Body.Instructions); $bound = 0
 for ($k = 0; $k -lt $ainsN.Count; $k++) { $op = $ainsN[$k].Operand
     if (($ainsN[$k].OpCode.Name -eq "callvirt" -or $ainsN[$k].OpCode.Name -eq "call") -and $op.Name -eq "Bind" -and $op.DeclaringType.Name -eq "ConfigFile") {
@@ -1276,6 +1394,205 @@ $checks++
 $aot = @((Get-GameCallSites "Attack" "OnAttackTrigger") | ForEach-Object { "{0}::{1}" -f $_[0].DeclaringType.Name, $_[0].Name } | Sort-Object -Unique)
 if (($aot -join ",") -eq "Attack::StartWithoutAnimation,Humanoid::OnAttackTrigger") { Ok "the game calls Attack.OnAttackTrigger only from Humanoid.OnAttackTrigger and Attack.StartWithoutAnimation" }
 else { Fail ("Attack.OnAttackTrigger callers changed: " + ($aot -join ", ")) }
+
+# ---------------------------------------------------------------------------------------------------------------
+# Added with 1.1.0: each check catches a planted defect that the checks above let through (the listener's call site,
+# the failure warning's re-entry, the verbose gate and line, delegates, array stores, files BepInEx types write, paths
+# that bypass Path.Combine).
+Write-Output "== the log file and the verbose lines, traced further =="
+function Get-OpsWithCalls($m) {
+    # Every instruction but nop, with its field, method or type operand: an exact shape that includes the calls.
+    return (@($m.Body.Instructions | Where-Object { $_.OpCode.Name -ne "nop" } | ForEach-Object {
+        $x = $_.OpCode.Name; $o = $_.Operand
+        if ($o -is [Mono.Cecil.MemberReference]) { $x += " " + $o.DeclaringType.Name + "::" + $o.Name }
+        $x }) -join "; ")
+}
+# The listener: what feeds ShouldWrite and what it decides; the failure warning's guard; OpenIfOn.
+$checks++
+$why = @()
+$le = Get-PluginMethod "FileLogListener" "LogEvent"; $wv = Get-PluginMethod "FileLogListener" "WriteVerbose"
+$oo = Get-PluginMethod "FileLogListener" "OpenIfOn"; $rf = Get-PluginMethod "FileLogListener" "ReportFailure"
+if (-not ($le -and $wv -and $oo -and $rf)) { $why += "FileLogListener's LogEvent, WriteVerbose, OpenIfOn or ReportFailure not found" }
+else {
+    $li = @($le.Body.Instructions)
+    $sw = @(Find-Calls $le "LogRules" "ShouldWrite"); $wr = @(Find-Calls $le "LogFile" "Write")
+    if ($sw.Count -ne 1 -or $wr.Count -ne 1) { $why += "LogEvent: expected one ShouldWrite and one Write" }
+    else {
+        $s = Get-ArgumentSources $le $sw[0]
+        if (-not $s -or @($s).Count -ne 5) { $why += "LogEvent: ShouldWrite's arguments cannot be traced" }
+        else {
+            $e0 = Get-StoreBefore $le $s[0]; $e1 = Get-StoreBefore $le $s[1]; $e2 = Get-StoreBefore $le $s[2]; $e3 = Get-StoreBefore $le $s[3]
+            if (-not ($e0 -ge 1 -and $e0 -ne $s[0] -and (Test-SettingValue $le ($e0 - 1) "ErrorLog"))) { $why += "LogEvent: ShouldWrite's first argument is not ErrorLog's value" }
+            if (-not ($e1 -ge 1 -and $e1 -ne $s[1] -and (Test-SettingValue $le ($e1 - 1) "VerboseLog"))) { $why += "LogEvent: ShouldWrite's second argument is not VerboseLog's value" }
+            if (-not ($e2 -ge 5 -and $e2 -ne $s[2] -and (Test-Window $li ($e2 - 5) @("ldarg.2", "callvirt", "ldarg.0", "ldfld", "ceq")) -and (Test-Is $li[$e2 - 4] "call" "LogEventArgs" "get_Source") -and (Test-Is $li[$e2 - 2] "ldfld" "FileLogListener" "_own"))) { $why += "LogEvent: ShouldWrite's 'own' is not the line's source compared with the plugin's" }
+            if (-not ($e3 -ge 1 -and $e3 -ne $s[3] -and (Test-Is $li[$e3 - 1] "call" "LogEventArgs" "get_Level"))) { $why += "LogEvent: ShouldWrite's level is not the line's" }
+            if (-not (Test-Decides $le $sw[0] $wr[0])) { $why += "LogEvent: ShouldWrite's result does not decide the write (false must branch past it)" }
+        }
+        $ws = Get-ArgumentSources $le $wr[0]
+        if (-not ($ws -and @($ws).Count -eq 3 -and (Test-Is $li[$ws[2]] "call" "LogRules" "IsProblem"))) { $why += "LogEvent: the write is not counted by IsProblem(level)" }
+        elseif ($s) {
+            $ipa = Get-ArgumentSources $le $ws[2]
+            if ($null -eq $ipa -or $li[$ipa].OpCode.Name -notlike "ldloc*" -or (Get-LocalIndex $li[$ipa]) -ne (Get-LocalIndex $li[$s[3]])) { $why += "LogEvent: IsProblem's level is not the line's level" }
+        }
+        $mwc = @(Find-Calls $le "LogRules" "MightWrite")
+        if ($mwc.Count -ne 1 -or -not $s) { $why += "LogEvent: expected one MightWrite before ShouldWrite" }
+        else {
+            $ms = Get-ArgumentSources $le $mwc[0]
+            $same = $ms -and @($ms).Count -eq 3
+            if ($same) { foreach ($pair in @(@(0, 0), @(1, 1), @(2, 3))) { $a = $li[$ms[$pair[0]]]; $b = $li[$s[$pair[1]]]
+                if ($a.OpCode.Name -notlike "ldloc*" -or $b.OpCode.Name -notlike "ldloc*" -or (Get-LocalIndex $a) -ne (Get-LocalIndex $b)) { $same = $false } } }
+            if (-not $same) { $why += "LogEvent: MightWrite does not get ShouldWrite's ErrorLog, VerboseLog and level" }
+            elseif ($e2 -lt 0 -or $ms[0] -ne $e2 + 1) { $why += "LogEvent: something comes between the line's source test and MightWrite" }
+            if (-not (Test-Decides $le $mwc[0] $wr[0])) { $why += "LogEvent: MightWrite's result does not decide the write" }
+        }
+    }
+    foreach ($pm in @($le, $wv)) {
+        $pi = @($pm.Body.Instructions); $opn = @(Find-Calls $pm "LogFile" "Open")
+        $os = if ($opn.Count -eq 1) { Get-ArgumentSources $pm $opn[0] } else { $null }
+        if (-not ($os -and @($os).Count -eq 2 -and (Test-Is $pi[$os[1]] "call" "FileLogListener" "Header"))) { $why += "$($pm.Name): the file is not opened with Header(), built then" }
+    }
+    $hd = Get-PluginMethod "FileLogListener" "Header"
+    if (-not $hd -or (Get-OpsWithCalls $hd) -cne "call DateTime::get_Now; ldarg.0; ldfld FileLogListener::_pluginVersion; ldarg.0; ldfld FileLogListener::_gameVersion; ldsfld Plugin::ErrorLog; callvirt ConfigEntry``1::get_Value; ldsfld Plugin::VerboseLog; callvirt ConfigEntry``1::get_Value; call LogRules::SessionHeader; ret") { $why += "Header is not SessionHeader(now, the versions, ErrorLog and VerboseLog as they are now)" }
+    $rfOps = Get-OpsWithCalls $rf
+    $rfi = @($rf.Body.Instructions | Where-Object { $_.OpCode.Name -ne "nop" })
+    $rfOk = $rfOps.StartsWith("ldarg.0; ldfld FileLogListener::_failureReported; brtrue.s; ldarg.0; ldfld FileLogListener::_file; callvirt LogFile::get_Failed; brtrue.s; ret; ldarg.0; ldc.i4.1; stfld FileLogListener::_failureReported; ldsfld Plugin::Log;")
+    if ($rfOk) { $rfOk = [array]::IndexOf($rfi, $rfi[2].Operand) -eq 7 -and [array]::IndexOf($rfi, $rfi[6].Operand) -eq 8 }
+    if (-not $rfOk) { $why += "ReportFailure is not: if (reported already or the file is fine) return; flag it; then warn" }
+    $mls = @()
+    foreach ($t in (Get-AllTypes $plug)) { if ($t.Name -ne "FileLogListener") { continue }
+        foreach ($m in $t.Methods) { if (-not $m.HasBody) { continue }
+            foreach ($i in $m.Body.Instructions) { if ($i.Operand -is [Mono.Cecil.MethodReference] -and $i.Operand.DeclaringType.Name -eq "ManualLogSource") { $mls += ("{0}.{1}" -f $m.Name, $i.Operand.Name) } } } }
+    if (($mls -join ",") -ne "ReportFailure.LogWarning") { $why += "FileLogListener logs through BepInEx elsewhere than ReportFailure's one warning: $($mls -join ', ')" }
+    $vi = @($wv.Body.Instructions); $vw = @(Find-Calls $wv "LogFile" "Write"); $vf = @(Find-Calls $wv "LogRules" "FormatEntry")
+    $vv = @(for ($k = 1; $k -lt $vi.Count; $k++) { if (Test-SettingValue $wv $k "VerboseLog") { $k } })
+    if (-not ($vw.Count -eq 1 -and $vv.Count -eq 1 -and (Test-Decides $wv $vv[0] $vw[0]))) { $why += "WriteVerbose: VerboseLog does not decide its write" }
+    else {
+        $vs = Get-ArgumentSources $wv $vw[0]
+        if (-not ($vs -and @($vs).Count -eq 3 -and $vi[$vs[2]].OpCode.Name -eq "ldc.i4.0")) { $why += "WriteVerbose: its lines are not counted as other lines" }
+        $fs = if ($vf.Count -eq 1) { Get-ArgumentSources $wv $vf[0] } else { $null }
+        if (-not ($fs -and (Get-Literal $vi $fs[1]) -eq 32)) { $why += "WriteVerbose: its lines are not Debug lines" }
+    }
+    foreach ($pm in @($le, $wv, $oo)) {
+        $pi = @($pm.Body.Instructions)
+        $fin = @($pm.Body.ExceptionHandlers | Where-Object { "$($_.HandlerType)" -eq "Finally" })
+        $rc = @(Find-Calls $pm "FileLogListener" "ReportFailure")
+        $ok = $fin.Count -eq 1 -and $rc.Count -eq 1
+        if ($ok) {
+            $ts = [array]::IndexOf($pi, $fin[0].TryStart); $te = [array]::IndexOf($pi, $fin[0].TryEnd); $hs = [array]::IndexOf($pi, $fin[0].HandlerStart)
+            $ok = $rc[0] -ge $ts -and $rc[0] -lt $te -and $ts -ge 2 -and $pi[$ts - 2].OpCode.Name -eq "ldc.i4.1" -and (Test-Is $pi[$ts - 1] "stsfld" "FileLogListener" "_writing") -and $pi[$hs].OpCode.Name -eq "ldc.i4.0" -and (Test-Is $pi[$hs + 1] "stsfld" "FileLogListener" "_writing")
+        }
+        if (-not $ok) { $why += "$($pm.Name): ReportFailure is not called inside the try that _writing guards (set before it, cleared in its finally)" }
+    }
+    $ri = @($rf.Body.Instructions)
+    $warn = @(for ($k = 0; $k -lt $ri.Count; $k++) { if ($ri[$k].Operand -is [Mono.Cecil.MethodReference] -and $ri[$k].Operand.DeclaringType.Name -eq "ManualLogSource") { $k } })
+    $flag = @(for ($k = 1; $k -lt $ri.Count; $k++) { if ((Test-Is $ri[$k] "stfld" "FileLogListener" "_failureReported") -and $ri[$k - 1].OpCode.Name -eq "ldc.i4.1") { $k } })
+    if (-not ($warn.Count -eq 1 -and $flag.Count -eq 1 -and $flag[0] -lt $warn[0])) { $why += "ReportFailure: _failureReported is not set to true before its one warning" }
+    $oi = @($oo.Body.Instructions | Where-Object { $_.OpCode.Name -ne "nop" })
+    $oShape = "ldc.i4.1; stsfld FileLogListener::_writing; ldsfld Plugin::ErrorLog; callvirt ConfigEntry``1::get_Value; brtrue.s; ldsfld Plugin::VerboseLog; callvirt ConfigEntry``1::get_Value; brfalse.s; ldarg.0; ldfld FileLogListener::_file; ldarg.0; call FileLogListener::Header; callvirt LogFile::Open; pop; ldarg.0; call FileLogListener::ReportFailure; leave.s; ldc.i4.0; stsfld FileLogListener::_writing; endfinally; ret"
+    $oOk = (Get-OpsWithCalls $oo) -ceq $oShape
+    if ($oOk) { $oOk = [array]::IndexOf($oi, $oi[4].Operand) -eq 8 -and [array]::IndexOf($oi, $oi[7].Operand) -eq 14 }
+    if (-not $oOk) { $why += "OpenIfOn is not: if (ErrorLog || VerboseLog) open the file; then report a failure" }
+}
+if ($why.Count -eq 0) { Ok "the listener: MightWrite(ErrorLog, VerboseLog, level) and ShouldWrite(ErrorLog, VerboseLog, own source, level, text) decide the write, counted by IsProblem(level); the file opens with Header() of the moment; VerboseLog decides WriteVerbose's Debug lines; OpenIfOn opens only with a setting on; ReportFailure (its one BepInEx call) flags before warning and runs only inside the _writing guard" }
+else { Fail ("the log listener: {0}" -f ($why -join "; ")) }
+# The verbose gate, its line, and every call into Diag.
+$checks++
+$why = @()
+$gv = Get-PluginMethod "Diag" "get_Verbose"; $dl = Get-PluginMethod "Diag" "Line"
+if (-not $gv -or (Get-OpsWithCalls $gv) -cne "ldsfld Plugin::VerboseLog; brfalse.s; ldsfld Plugin::VerboseLog; callvirt ConfigEntry``1::get_Value; ret; ldc.i4.0; ret") { $why += "Diag.Verbose is not VerboseLog's value" }
+if (-not $dl -or (Get-OpsWithCalls $dl) -cne "ldsfld Plugin::FileLog; stloc.0; ldloc.0; brfalse.s; ldloc.0; ldarg.0; callvirt FileLogListener::WriteVerbose; ret") { $why += "Diag.Line does not hand its text to FileLogListener.WriteVerbose" }
+$wantPairs = @("Plugin::Awake -> Settings", "Plugin::OnSettingChanged -> SettingChanged", "EquipItemPatch::Postfix -> Equip", "ProjectileAttackTriggeredPatch::Postfix -> Attack",
+    "Alerts::OnLocal -> Local", "Sharing::Send -> Sending", "Sharing::OnAlert -> Receive", "Alerts::Tick -> Observe")
+$gotPairs = @(); $entry = @{}
+foreach ($t in (Get-AllTypes $plug)) { if ($t.Name -eq "Diag") { continue }
+    foreach ($m in $t.Methods) { if (-not $m.HasBody) { continue }
+        foreach ($i in $m.Body.Instructions) { $op = $i.Operand
+            if ($i.OpCode.Name -match '^(call|callvirt|ldftn|ldvirtftn)$' -and $op -is [Mono.Cecil.MethodReference] -and $op.DeclaringType.Name -eq "Diag" -and $op.Name -ne "get_Verbose") {
+                $gotPairs += ("{0}::{1} -> {2}" -f $m.DeclaringType.Name, $m.Name, $op.Name)
+                if ($i.OpCode.Name -match 'ftn$') { $why += "$(Get-Owner $m) takes Diag.$($op.Name) as a delegate" }
+                $entry[$op.Name] = $true } } } }
+$missing = @($wantPairs | Where-Object { $gotPairs -notcontains $_ }); $extra = @($gotPairs | Where-Object { $wantPairs -notcontains $_ })
+if ($missing.Count -gt 0) { $why += "calls into Diag missing: $($missing -join ', ')" }
+if ($extra.Count -gt 0) { $why += "calls into Diag not reviewed: $($extra -join ', ')" }
+if ($gotPairs.Count -ne $wantPairs.Count) { $why += "$($gotPairs.Count) calls into Diag, expected $($wantPairs.Count)" }
+foreach ($name in @(@($entry.Keys) + "Report")) { $r = Test-CatchAll (Get-PluginMethod "Diag" $name); if ($r) { $why += "Diag.${name}: $r" } }
+foreach ($t in (Get-AllTypes $plug)) { if ($t.Name -ne "Diag") { continue }
+    foreach ($m in $t.Methods) { if (-not $m.HasBody) { continue }
+        foreach ($i in $m.Body.Instructions) { $op = $i.Operand
+            if ($i.OpCode.Name -match '^ld(s)?fld(a)?$' -and $op.DeclaringType.Name -ne "Diag" -and $op.FieldType.IsArray) { $why += "$(Get-Owner $m) loads $($op.DeclaringType.Name).$($op.Name), another type's array" } } } }
+$olm = Get-PluginMethod "Alerts" "OnLocal"
+if ($olm) {
+    $dlx = @(Find-Calls $olm "Diag" "Local"); $ofx = @(Find-Calls $olm "AlertScheduler" "Offer"); $csx = @(Find-Calls $olm "Sharing" "CanSend")
+    $lgx = @(for ($k = 0; $k -lt $olm.Body.Instructions.Count; $k++) { $o = $olm.Body.Instructions[$k].Operand; if ($o -is [Mono.Cecil.MethodReference] -and $o.DeclaringType.Name -eq "ManualLogSource") { $k } })
+    $after = @($ofx + $lgx | Sort-Object)[-1]
+    if (-not ($dlx.Count -eq 1 -and $ofx.Count -eq 1 -and $csx.Count -eq 1 -and $dlx[0] -gt $after -and $dlx[0] -lt $csx[0])) { $why += "OnLocal: Diag.Local is not after the decision (the Offer and its log lines) and before the send" }
+}
+if ($why.Count -eq 0) { Ok "Diag.Verbose is VerboseLog's value; Diag.Line hands its text to WriteVerbose; the $($gotPairs.Count) calls into Diag are exactly the reviewed ones, none as a delegate, and each of the $($entry.Count) Diag methods they reach, and its error report, catches every exception; Diag loads no other type's array; Diag.Local comes after OnLocal's decision and before its send" }
+else { Fail ("the verbose gate and calls: {0}" -f ($why -join "; ")) }
+# Alerts' read-only views, exactly as reviewed; no delegate of an actor and no store into another type's array in
+# Diag or the views (the earlier check covers their calls and field stores).
+$checks++
+$why = @()
+$wantViews = [ordered]@{
+    "ClipLoaded" = "ldsfld Alerts::Clips; ldarg.0; ldelem.ref; ldnull; call Object::op_Inequality; ret"
+    "get_SourceReady" = "ldsfld Alerts::_source; ldnull; call Object::op_Inequality; ret"
+    "get_Sounding" = "ldsfld Alerts::_source; ldnull; call Object::op_Inequality; brfalse.s; ldsfld Alerts::_source; callvirt AudioSource::get_isPlaying; ret; ldc.i4.0; ret"
+    "IsWaiting" = "ldsfld Alerts::Scheduler; ldarg.0; callvirt AlertScheduler::IsWaiting; ret"
+    "CooldownLeft" = "ldsfld Alerts::Scheduler; ldarg.0; call Alerts::get_Now; call Alerts::get_CooldownSeconds; callvirt AlertScheduler::CooldownLeft; ret"
+    "ListenerAlive" = "ldsfld Player::m_localPlayer; stloc.0; ldloc.0; ldnull; call Object::op_Equality; brfalse.s; ldc.i4.0; ret; ldloc.0; callvirt Character::IsDead; ldc.i4.0; ceq; ret"
+    "get_StartedAt" = "ldsfld Alerts::_startedAt; ret"
+    "get_ClipKind" = "ldsfld Alerts::_source; ldnull; call Object::op_Equality; brtrue.s; ldsfld Alerts::_source; callvirt AudioSource::get_clip; ldnull; call Object::op_Equality; brfalse.s; ldloca.s; initobj ::Nullable``1; ldloc.0; ret; ldc.i4.0; stloc.1; br.s; ldsfld Alerts::Clips; ldloc.1; ldelem.ref; ldsfld Alerts::_source; callvirt AudioSource::get_clip; bne.un.s; ldloc.1; newobj Nullable``1::.ctor; ret; ldloc.1; ldc.i4.1; add; stloc.1; ldloc.1; ldsfld Alerts::Clips; ldlen; conv.i4; blt.s; ldloca.s; initobj ::Nullable``1; ldloc.0; ret"
+}
+foreach ($v in $wantViews.Keys) { $vm = Get-PluginMethod "Alerts" $v; if (-not $vm -or (Get-OpsWithCalls $vm) -cne $wantViews[$v]) { $why += "Alerts.$v is not the reviewed read-only view" } }
+$obs = @()
+foreach ($t in (Get-AllTypes $plug)) {
+    if ($t.Name -eq "Diag") { $obs += @($t.Methods | Where-Object { $_.HasBody }) }
+    if ($t.Name -eq "Alerts") { $obs += @($t.Methods | Where-Object { $_.HasBody -and $wantViews.Contains($_.Name) }) }
+}
+foreach ($m in $obs) { $mi = @($m.Body.Instructions)
+    for ($k = 0; $k -lt $mi.Count; $k++) { $op = $mi[$k].Operand
+        if ($mi[$k].OpCode.Name -match '^ld(virt)?ftn$' -and $op.DeclaringType.Namespace -eq "NuclearTrollstav") {
+            $nm = "{0}::{1}" -f $op.DeclaringType.Name, $op.Name
+            if ($op.DeclaringType.Name -ne "Diag" -and $op.DeclaringType.Name -ne "AlertRules" -and $readers -notcontains $nm) { $why += "$(Get-Owner $m) takes $nm as a delegate" } }
+        if ($mi[$k].OpCode.Name -like "stelem*") {
+            $as = Get-ArgumentSources $m $k
+            if ($null -eq $as) { $why += "$(Get-Owner $m): an array store that cannot be traced"; continue }
+            $ai = $as[0]; $ast = Get-StoreBefore $m $ai
+            if ($ast -ge 0 -and $ast -ne $ai) { $as2 = Get-ArgumentSources $m $ast; $ai = if ($null -ne $as2) { $as2[0] } else { -1 } }
+            if ($ai -lt 0) { $why += "$(Get-Owner $m): an array store whose array cannot be traced"; continue }
+            $ain = $mi[$ai]
+            if ($ain.OpCode.Name -match '^lds?fld$' -and $ain.Operand.DeclaringType.Name -ne "Diag") { $why += "$(Get-Owner $m) stores into $($ain.Operand.DeclaringType.Name).$($ain.Operand.Name)" } } } }
+if ($why.Count -eq 0) { Ok "Alerts' $($wantViews.Count) read-only views have their reviewed shapes; Diag and the views take no actor as a delegate and store into no array but Diag's own" }
+else { Fail ("the read-only views: {0}" -f ($why -join "; ")) }
+# Files BepInEx types write, objects, and every path LogFile hands to System.IO.
+$checks++
+$why = @()
+foreach ($t in (Get-AllTypes $plug)) { foreach ($m in $t.Methods) { if (-not $m.HasBody) { continue }
+    foreach ($i in $m.Body.Instructions) { $op = $i.Operand
+        if ($i.OpCode.Name -ne "newobj" -or -not ($op -is [Mono.Cecil.MethodReference])) { continue }
+        if ($op.DeclaringType.Name -match '^(DiskLogListener|ConfigFile)$') { $why += "$(Get-Owner $m) makes a $($op.DeclaringType.Name), which writes a file" }
+        if ($op.DeclaringType.FullName -eq "UnityEngine.GameObject" -and (Get-Owner $m) -ne "NuclearTrollstav.Alerts::EnsureSource") { $why += "$(Get-Owner $m) makes a GameObject" } } } }
+$ioCalls = 0
+foreach ($t in (Get-AllTypes $plug)) { if ($t.Name -ne "LogFile") { continue }
+    foreach ($m in $t.Methods) { if (-not $m.HasBody) { continue }; $mi = @($m.Body.Instructions)
+        for ($k = 0; $k -lt $mi.Count; $k++) { $op = $mi[$k].Operand
+            if (-not ($mi[$k].OpCode.Name -match '^(call|callvirt|newobj)$' -and $op -is [Mono.Cecil.MethodReference])) { continue }
+            $isIO = $op.DeclaringType.Namespace -eq "System.IO" -and $op.DeclaringType.Name -match '^(File|FileInfo|FileStream|Directory|DirectoryInfo)$'
+            $isRotate = $op.DeclaringType.Name -eq "LogFile" -and $op.Name -eq "Rotate"
+            if (-not ($isIO -or $isRotate)) { continue }
+            $strs = @(for ($a = 0; $a -lt $op.Parameters.Count; $a++) { if ($op.Parameters[$a].ParameterType.FullName -eq "System.String") { $a } })
+            if ($strs.Count -eq 0) { continue }
+            $ioCalls++
+            $as = Get-ArgumentSources $m $k
+            if ($null -eq $as) { $why += "$(Get-Owner $m): the path given to $($op.DeclaringType.Name).$($op.Name) cannot be traced"; continue }
+            $first = if ($op.HasThis -and $mi[$k].OpCode.Name -ne "newobj") { 1 } else { 0 }
+            foreach ($a in $strs) {
+                $src = $as[$a + $first]; $st = Get-StoreBefore $m $src
+                $okSrc = (Test-Is $mi[$src] "call" "Path" "Combine") -or ($m.Name -eq "Rotate" -and $mi[$src].OpCode.Name -like "ldarg*") -or ($st -ge 1 -and $st -ne $src -and (Test-Is $mi[$st - 1] "call" "Path" "Combine"))
+                if (-not $okSrc) { $why += "$(Get-Owner $m): a path given to $($op.DeclaringType.Name).$($op.Name) is not a Path.Combine of LogFile's folder" } } } } }
+if ($ioCalls -lt 5) { $why += "only $ioCalls path-taking calls found in LogFile" }
+if ($why.Count -eq 0) { Ok "no DiskLogListener, ConfigFile or GameObject but the audio object; the $ioCalls paths LogFile hands to System.IO and to Rotate are each a Path.Combine of its folder (or Rotate's parameters)" }
+else { Fail ("files and objects: {0}" -f ($why -join "; ")) }
 
 # ---------------------------------------------------------------------------------------------------------------
 Write-Output "== assembly references =="

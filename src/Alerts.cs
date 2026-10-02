@@ -69,7 +69,7 @@ namespace NuclearTrollstav
         }
 
         /// <summary>The local player exists and is not dead (Player.IsDead is set the moment the player dies).</summary>
-        private static bool ListenerAlive()   // preflight: exact shape
+        internal static bool ListenerAlive()   // preflight: exact shape
         {
             Player me = Player.m_localPlayer;
             if (me == null) return false;
@@ -90,6 +90,7 @@ namespace NuclearTrollstav
             {
                 Plugin.Log.LogInfo(Label(kind) + " (you): not played, it could not be heard now (sound not loaded, muted or volume 0).");
             }
+            if (Diag.Verbose) Diag.Local(kind);   // after the decision: what it read (CanPlay makes the audio source the first time)
             // preflight: ShareMyAlerts and the throttle decide the send, with this alert's kind and the clock.
             if (Plugin.ShareMyAlerts.Value && Sharing.CanSend() && Throttle.TryPass(kind, now, AlertRules.SendIntervalSeconds))
             {
@@ -137,6 +138,7 @@ namespace NuclearTrollstav
         /// <summary>Called every frame by the plugin.</summary>
         public static void Tick()
         {
+            if (Diag.Verbose) Diag.Observe();
             double now = Now;
             if (ZNet.instance == null)
             {
@@ -163,6 +165,28 @@ namespace NuclearTrollstav
             // preflight: the gap and the wait limit are AlertRules', "playing" and canStart are the locals above.
             AlertKind? next = Scheduler.Tick(now, playing, AlertRules.GapSeconds, canStart, AlertRules.MaxWaitSeconds);
             if (next.HasValue) Start(next.Value, now);
+        }
+
+        // Read-only views for the VerboseLog lines (Diag): they change nothing, and never make the audio source.
+        internal static bool ClipLoaded(AlertKind kind) { return Clips[(int)kind] != null; }
+        internal static bool SourceReady { get { return _source != null; } }
+        internal static bool Sounding { get { return _source != null && _source.isPlaying; } }
+        internal static bool IsWaiting(AlertKind kind) { return Scheduler.IsWaiting(kind); }
+        internal static double CooldownLeft(AlertKind kind) { return Scheduler.CooldownLeft(kind, Now, CooldownSeconds); }
+        internal static double StartedAt { get { return _startedAt; } }
+
+        /// <summary>The kind whose sound is on the audio source (the one playing, or played last), or null.</summary>
+        internal static AlertKind? ClipKind
+        {
+            get
+            {
+                if (_source == null || _source.clip == null) return null;
+                for (int k = 0; k < Clips.Length; k++)
+                {
+                    if (ReferenceEquals(Clips[k], _source.clip)) return (AlertKind)k;
+                }
+                return null;
+            }
         }
 
         private static void Start(AlertKind kind, double now)

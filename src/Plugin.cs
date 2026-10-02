@@ -20,7 +20,7 @@ namespace NuclearTrollstav
     {
         public const string GUID = "DoomMachine.NuclearTrollstav";   // also names the .cfg file
         public const string NAME = "NuclearTrollstav";
-        public const string VERSION = "1.0.0";
+        public const string VERSION = "1.1.0";
 
         internal static ManualLogSource Log;
 
@@ -31,6 +31,11 @@ namespace NuclearTrollstav
         internal static ConfigEntry<bool> ShareMyAlerts;
         internal static ConfigEntry<bool> HearOthers;
         internal static ConfigEntry<float> HearingRange;
+        internal static ConfigEntry<bool> ErrorLog;
+        internal static ConfigEntry<bool> VerboseLog;
+
+        /// <summary>The plugin's own log file's feeder (null if it could not be set up); Diag writes its lines through it.</summary>
+        internal static FileLogListener FileLog;
 
         private Harmony _harmony;
 
@@ -68,6 +73,19 @@ namespace NuclearTrollstav
                     + "loaded around you can be heard, so a large range reaches only as far as the game's draw distance "
                     + "setting loads players.",
                     new AcceptableValueRange<float>(1f, 1000f)));
+                ErrorLog = Config.Bind("Logging", "ErrorLog", true,
+                    "Also write this plugin's warnings and errors - and any other warning or error BepInEx logs while the "
+                    + "plugin is loaded, if it names the plugin (an exception from its code does, by its stack trace) - to "
+                    + "BepInEx\\NuclearTrollstav.log, each entry with its time. That file keeps earlier game "
+                    + "sessions; the game rewrites its own logs at every start. Changed in game with a configuration "
+                    + "manager, it applies at once; edit this file only with the game closed.");
+                VerboseLog = Config.Bind("Logging", "VerboseLog", false,
+                    "Also write a line for everything the plugin sees and decides to the same file: each of your equips, "
+                    + "each of your projectile attacks (a staff, a bow) when it fires, and each alert set off, received "
+                    + "(other players': at most a line a second for each alert, and a line with the count of those not "
+                    + "logged), started, finished or dropped (with the possible reasons). For watching one event closely; leave it off otherwise. "
+                    + "Changed in game with a configuration manager, it applies at once; edit this file only with the "
+                    + "game closed.");
                 Volume.SettingChanged += OnVolumeChanged;
             }
             catch (Exception e)
@@ -75,6 +93,20 @@ namespace NuclearTrollstav
                 Log.LogError("Configuration failed to bind, the plugin is off: " + e);
                 enabled = false;
                 return;
+            }
+
+            // The plugin's own log file, set up before the sounds and the patches so their warnings reach it too.
+            try
+            {
+                FileLog = new FileLogListener(new LogFile(Paths.BepInExRootPath), Logger, VERSION, GameVersion());
+                BepInEx.Logging.Logger.Listeners.Add(FileLog);
+                FileLog.OpenIfOn();
+                Config.SettingChanged += OnSettingChanged;
+                if (Diag.Verbose) Diag.Settings();
+            }
+            catch (Exception e)
+            {
+                Log.LogWarning("The plugin's own log file could not be set up (" + e.Message + "); its lines still go to BepInEx's log.");
             }
 
             try
@@ -103,6 +135,31 @@ namespace NuclearTrollstav
             catch (Exception ex)
             {
                 LogThrottled(ref _updateErrors, "Applying the volume failed", ex);
+            }
+        }
+
+        /// <summary>Any setting changed in game: a VerboseLog line.</summary>
+        private static void OnSettingChanged(object sender, SettingChangedEventArgs e)
+        {
+            try
+            {
+                if (Diag.Verbose) Diag.SettingChanged(e);
+            }
+            catch (Exception ex)
+            {
+                LogThrottled(ref _updateErrors, "Logging a setting change failed", ex);
+            }
+        }
+
+        private static string GameVersion()
+        {
+            try
+            {
+                return global::Version.GetVersionString(false);
+            }
+            catch (Exception)
+            {
+                return "?";
             }
         }
 
@@ -211,6 +268,16 @@ namespace NuclearTrollstav
         private void OnDestroy()
         {
             if (_harmony != null) _harmony.UnpatchSelf();
+            FileLogListener fileLog = FileLog;
+            if (fileLog != null)
+            {
+                try
+                {
+                    BepInEx.Logging.Logger.Listeners.Remove(fileLog);
+                    fileLog.Dispose();   // closed for good: a late line from another thread does not open it again
+                }
+                catch (Exception) { }
+            }
         }
     }
 }

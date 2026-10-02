@@ -56,6 +56,12 @@ namespace NuclearTrollstav
         /// <summary>Number of alerts accepted and not yet handed out.</summary>
         public int WaitingCount { get { return _waiting.Count; } }
 
+        /// <summary>Whether an alert of this kind was accepted and not yet handed out.</summary>
+        public bool IsWaiting(AlertKind kind)
+        {
+            return _waiting.Contains(kind);
+        }
+
         /// <summary>Seconds until an alert of this kind would be accepted again (0 when it would be now).</summary>
         public double CooldownLeft(AlertKind kind, double now, double cooldownSeconds)
         {
